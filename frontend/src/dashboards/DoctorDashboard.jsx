@@ -65,6 +65,10 @@ const displayPatient = (val) => {
   return String(val);
 };
 
+// Patient documents use firstName/lastName (not a single "name" field) —
+// this combines them safely for display anywhere in this dashboard.
+const patientFullName = (p) => `${p?.firstName || ""} ${p?.lastName || ""}`.trim() || "—";
+
 // Generic safe-stringify for any field that might unexpectedly be an object
 // (e.g. a populated reference) instead of a plain string/number.
 const str = (val) => {
@@ -78,11 +82,12 @@ const str = (val) => {
 // Field definitions per resource — adjust keys here if your backend schema differs.
 const FORM_FIELDS = {
   patients: [
-    { key: "name", label: "Full Name", type: "text", required: true },
+    { key: "firstName", label: "First Name", type: "text", required: true },
+    { key: "lastName", label: "Last Name", type: "text", required: true },
     { key: "age", label: "Age", type: "number", required: true },
     { key: "phone", label: "Phone", type: "text" },
-    { key: "disease", label: "Condition / Disease", type: "text" },
-    { key: "status", label: "Status", type: "select", options: ["Stable", "Recovering", "Critical"] },
+    { key: "medicalHistory", label: "Condition / Medical History", type: "text" },
+    { key: "status", label: "Status", type: "select", options: ["Active", "Inactive"] },
   ],
   appointments: [
     { key: "patient", label: "Patient Name", type: "text", required: true },
@@ -140,7 +145,8 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
   const [appointments, setAppointments] = useState([]);
   const [reports, setReports] = useState([]);
   const [prescriptions, setPrescriptions] = useState([]);
-
+  const [notifications, setNotifications] = useState([]);
+  const [notifLoading, setNotifLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -212,6 +218,40 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
     }
   };
 
+  const loadNotifications = useCallback(async () => {
+    try {
+      setNotifLoading(true);
+      const data = await api.get("/notifications");
+      setNotifications(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setNotifLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadNotifications();
+  }, [loadNotifications]);
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await api.patch("/notifications/mark-all-read", {});
+      setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+    } catch (err) {
+      showToast("error", err.message || "Failed to update notifications");
+    }
+  };
+
+  const clearAllNotifications = async () => {
+    try {
+      await api.delete("/notifications");
+      setNotifications([]);
+    } catch (err) {
+      showToast("error", err.message || "Failed to clear notifications");
+    }
+  };
+
   const RESOURCE_SETTERS = {
     patients: setPatients,
     appointments: setAppointments,
@@ -273,9 +313,9 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
     setActionLoading(true);
     try {
       const updated = await api.updateAppointmentStatus(
-    id,
-    status
-);
+        id,
+        status
+      );
       RESOURCE_SETTERS[resource]((prev) =>
         prev.map((item) => (getId(item) === id ? { ...item, ...updated } : item))
       );
@@ -294,14 +334,14 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
     { id: "prescriptions", label: "Prescriptions", icon: Pill },
     { id: "reports", label: "Reports", icon: FileText },
     { id: "consultation", label: "Consultation", icon: Video },
-    { id: "notifications", label: "Notifications", icon: Bell, badge: 8 },
+    { id: "notifications", label: "Notifications", icon: Bell, badge: notifications.filter(n => n.unread).length || undefined },
     { id: "settings", label: "Settings", icon: Settings },
   ];
 
   const filteredPatients = patients.filter(
     (p) =>
-      str(p.name).toLowerCase().includes(q) ||
-      str(p.disease).toLowerCase().includes(q) ||
+      patientFullName(p).toLowerCase().includes(q) ||
+      str(p.medicalHistory).toLowerCase().includes(q) ||
       str(p.status).toLowerCase().includes(q)
   );
   const filteredAppointments = appointments.filter(
@@ -324,11 +364,13 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
 
   const StatusBadge = ({ status }) => {
     const color =
-      status === "Stable" || status === "Reviewed" || status === "Active" || status === "Confirmed"
+      status === "Active" || status === "Reviewed" || status === "Confirmed"
         ? "bg-green-100 text-green-700"
-        : status === "Recovering" || status === "Waiting" || status === "Pending"
+        : status === "Pending"
           ? "bg-yellow-100 text-yellow-700"
-          : "bg-red-100 text-red-700";
+          : status === "Inactive"
+            ? "bg-slate-100 text-slate-600"
+            : "bg-red-100 text-red-700";
     return <span className={`${color} px-3 py-1 rounded-full text-xs font-semibold`}>{status}</span>;
   };
 
@@ -501,7 +543,10 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
     if (!modal || modal.mode !== "confirm-delete") return null;
     const { resource, data } = modal;
     const id = getId(data);
-    const label = data?.name || displayPatient(data?.patient) || data?.title || "this item";
+    const label =
+      resource === "patients"
+        ? patientFullName(data)
+        : (displayPatient(data?.patient) || data?.title || "this item");
     return (
       <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={closeModal}>
         <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl text-center" onClick={(e) => e.stopPropagation()}>
@@ -635,7 +680,11 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
           <div className="flex items-center gap-4">
             <button onClick={() => setActivePage("notifications")} className="relative">
               <Bell className="w-5 h-5 text-slate-600" />
-              <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs w-4 h-4 flex items-center justify-center rounded-full">8</span>
+              {notifications.filter(n => n.unread).length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs w-4 h-4 flex items-center justify-center rounded-full">
+                  {notifications.filter(n => n.unread).length}
+                </span>
+              )}
             </button>
             <div className="flex items-center gap-2">
               <div className="w-9 h-9 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center font-bold text-sm">DR</div>
@@ -702,8 +751,8 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
                       <div key={getId(p)} className="border rounded-2xl p-4 hover:bg-slate-50">
                         <div className="flex justify-between">
                           <div>
-                            <h3 className="text-base font-bold">{p.name}</h3>
-                            <p className="text-slate-500 text-sm mt-0.5">{p.disease}</p>
+                            <h3 className="text-base font-bold">{patientFullName(p)}</h3>
+                            <p className="text-slate-500 text-sm mt-0.5">{p.medicalHistory}</p>
                             <p className="text-slate-500 text-xs">Age: {p.age}</p>
                           </div>
                           <StatusBadge status={p.status} />
@@ -755,7 +804,7 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
               <PageTitle
                 title="My Patients"
                 desc="View patient conditions, records and care status"
-                
+
               />
               <div className="bg-white rounded-2xl border p-5 mt-6">
                 {filteredPatients.length === 0 && (
@@ -764,8 +813,8 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
                 {filteredPatients.map((p) => (
                   <div key={getId(p)} className="border rounded-2xl p-4 mb-3 flex justify-between items-center">
                     <div>
-                      <h3 className="text-base font-bold">{p.name}</h3>
-                      <p className="text-slate-500 text-sm">{p.disease} • Age {p.age}</p>
+                      <h3 className="text-base font-bold">{patientFullName(p)}</h3>
+                      <p className="text-slate-500 text-sm">{p.medicalHistory} • Age {p.age}</p>
                       <p className="text-slate-500 text-xs">{p.phone}</p>
                     </div>
                     <div className="flex gap-2 items-center">
@@ -782,7 +831,7 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
                       >
                         <Phone className="w-3.5 h-3.5" /> Contact
                       </a>
-                      
+
                     </div>
                   </div>
                 ))}
@@ -796,7 +845,7 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
               <PageTitle
                 title="Appointments"
                 desc="Manage checkups, follow-ups and online sessions"
-                
+
               />
               <div className="bg-white rounded-2xl border p-5 mt-6">
                 {filteredAppointments.length === 0 && (
@@ -828,7 +877,7 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
                           </button>
                         </>
                       )}
-                      
+
                       <button onClick={() => setActivePage("consultation")} className="bg-teal-600 text-white px-4 py-2 rounded-xl font-semibold text-sm hover:bg-teal-700">
                         Join Session
                       </button>
@@ -873,7 +922,16 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
                       >
                         <Edit className="w-3.5 h-3.5" /> Edit
                       </button>
-                      
+                       <a
+    href={`http://localhost:5000/api/prescriptions/${getId(p)}/pdf`}
+    target="_blank"
+    rel="noreferrer"
+    className="border px-3 py-1.5 rounded-xl flex gap-1.5 items-center text-sm hover:bg-slate-50"
+  >
+    <Download className="w-4 h-4" />
+    PDF
+  </a>
+
                     </div>
                   </div>
                 ))}
@@ -887,7 +945,7 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
               <PageTitle
                 title="Medical Reports"
                 desc="Review lab reports and patient medical files"
-                
+
               />
               <div className="bg-white rounded-2xl border p-5 mt-6">
                 {filteredReports.length === 0 && (
@@ -907,7 +965,7 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
                       >
                         <Eye className="w-3.5 h-3.5" /> View
                       </button>
-                      
+
                     </div>
                   </div>
                 ))}
@@ -937,23 +995,40 @@ export default function DoctorDashboard({ setIsLoggedIn, setUserRole }) {
           {/* NOTIFICATIONS */}
           {activePage === "notifications" && (
             <>
-              <PageTitle title="Notifications" desc="Important patient and appointment alerts" />
-              <div className="grid grid-cols-2 gap-4 mt-6">
-                {[
-                  "Critical patient needs immediate checkup",
-                  "New lab report waiting for review",
-                  "Appointment starts in 15 minutes",
-                  "Prescription renewal request",
-                ].map((note) => (
-                  <div key={note} className="bg-white border rounded-2xl p-5 flex gap-4 items-center">
-                    <AlertCircle className="text-red-500 w-5 h-5 shrink-0" />
-                    <h2 className="text-sm font-bold">{note}</h2>
+              <PageTitle
+                title="Notifications"
+                desc="Important patient and appointment alerts"
+                button={
+                  <div className="flex gap-2">
+                    <button onClick={markAllNotificationsRead} className="border px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-50">
+                      Mark All as Read
+                    </button>
+                    <button onClick={clearAllNotifications} className="border px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-50">
+                      Clear All
+                    </button>
                   </div>
-                ))}
+                }
+              />
+              <div className="bg-white rounded-2xl border p-5 mt-6">
+                {notifLoading ? (
+                  <p className="text-slate-400 text-sm text-center py-6">Loading notifications...</p>
+                ) : notifications.length === 0 ? (
+                  <p className="text-slate-400 text-sm text-center py-6">You're all caught up. No notifications.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {notifications.map((n) => (
+                      <div key={n._id} className={`border rounded-2xl p-4 flex gap-4 items-center ${n.unread ? "bg-teal-50 border-teal-200" : ""}`}>
+                        <AlertCircle className="text-red-500 w-5 h-5 shrink-0" />
+                        <div>
+                          <h2 className="text-sm font-bold">{n.title}</h2>
+                          <p className="text-slate-500 text-sm">{n.message}</p>
+                          <span className="text-slate-400 text-xs">{new Date(n.createdAt).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <p className="text-xs text-slate-400 mt-4">
-                Note: notifications are static placeholders. Hook this up to a real endpoint (e.g. api.list("notifications")) once one exists on the backend.
-              </p>
             </>
           )}
 

@@ -2,7 +2,7 @@ const Bill = require("../models/Bill");
 const User = require("../models/User");
 
 function formatCurrency(amount) {
-  return `৳${Number(amount || 0).toFixed(2)}`;
+  return `${Number(amount || 0).toFixed(2)}`;
 }
 
 async function generateInvoiceNo() {
@@ -10,11 +10,35 @@ async function generateInvoiceNo() {
   return `INV${1000 + count + 1}`;
 }
 
-// Get all bills for the logged-in patient, shaped for the patient portal UI
+// Get all bills — shaped differently for admin vs. patient
 exports.getBills = async (req, res) => {
   try {
-    const user = await User.findById(req.userId).select("firstName lastName");
-    const patientName = user ? `${user.firstName} ${user.lastName}` : "Patient";
+    const user = await User.findById(req.userId).select("firstName lastName role");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // --- ADMIN/RECEPTIONIST VIEW: flat array of every bill, for front-desk & admin dashboards ---
+    if (user.role === "Admin" || user.role === "Receptionist") {
+      const bills = await Bill.find({})
+        .populate("patient", "firstName lastName")
+        .sort({ createdAt: -1 });
+
+      const shaped = bills.map((b) => ({
+        _id: b._id,
+        invoiceNo: b.invoiceNo,
+        patient: b.patient
+          ? `${b.patient.firstName || ""} ${b.patient.lastName || ""}`.trim()
+          : "Unknown",
+        amount: b.amount,
+        status: b.status,
+        dueDate: b.dueDate,
+        createdAt: b.createdAt,
+      }));
+
+      return res.json(shaped); // plain array — matches setBills(billsData)
+    }
+
+    // --- PATIENT VIEW: original shaped response, unchanged ---
+    const patientName = `${user.firstName} ${user.lastName}`;
 
     const bills = await Bill.find({ patient: req.userId }).sort({ createdAt: -1 });
     const now = new Date();

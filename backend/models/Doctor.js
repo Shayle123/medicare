@@ -5,49 +5,64 @@ const doctorSchema = new mongoose.Schema(
     name: {
       type: String,
       required: true,
-      trim: true,
+      trim: true
     },
 
     department: {
       type: String,
-      required: true,
+     
+    },
+
+    specialty: {
+      type: String
     },
 
     email: {
       type: String,
       unique: true,
-      required: true,
-      lowercase: true,
+      lowercase: true
     },
 
     phone: {
+      type: String
+    },
+
+    status: {
       type: String,
-      required: true,
+      enum: ["Active", "Inactive"],
+      default: "Active"
     },
 
-    qualification: {
-      type: String,
-      default: "",
+    initials: {
+      type: String
     },
 
-    experience: {
+    rating: {
       type: Number,
-      default: 0,
+      default: 4.5,
+      min: 0,
+      max: 5
     },
 
-    consultationFee: {
+    patients: {
       type: Number,
-      default: 0,
+      default: 0
     },
 
-    available: {
-      type: Boolean,
-      default: true,
+    availableSlots: [
+      {
+        date: String,
+        time: String
+      }
+    ],
+
+    appointments: {
+      type: Number,
+      default: 0
     }
+
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 module.exports = mongoose.model("Doctor", doctorSchema);

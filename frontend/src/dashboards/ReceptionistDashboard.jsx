@@ -36,44 +36,102 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
   const [stats, setStats] = useState({ totalPatients: 0, totalDoctors: 0, totalAppointments: 0, revenue: 0 });
   const [patients, setPatients] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  // Doctors now come from the real /doctors API (not hardcoded) because the
+  // Appointment schema requires a real Doctor ObjectId.
+  const [doctors, setDoctors] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
-
+const [notifications, setNotifications] = useState([]);
+const [notifLoading, setNotifLoading] = useState(true);
+const [bills, setBills] = useState([]);
+const [billsLoading, setBillsLoading] = useState(true);
+const [payingId, setPayingId] = useState(null);
   // Form States
   const [registrationForm, setRegistrationForm] = useState({
     fullName: "", age: "", phone: "", email: "", bloodGroup: "", gender: "", doctorName: "", department: "", address: "", symptoms: ""
   });
+  // doctorId (not doctorName) is stored here — the Appointment schema needs
+  // a real Doctor ObjectId, and "date" is now tracked separately from "time".
   const [appointmentForm, setAppointmentForm] = useState({
-    patientId: "", doctorName: "", date: "", time: "", type: "General Checkup", notes: ""
+    patientId: "", doctorId: "", date: "", time: "", type: "Consultation", notes: ""
   });
   const [formSubmitting, setFormSubmitting] = useState(false);
 
   // Load Main Data Layer
-  const loadData = async () => {
-    try {
-      setDataLoading(true);
-      const [statsData, patientsData, appointmentsData] = await Promise.all([
-        api.getStats(),
-        api.list("patients"),
-        api.list("appointments"),
-      ]);
+ const loadData = async () => {
+  try {
+    setDataLoading(true);
+    const [statsData, patientsData, appointmentsData, billsData, doctorsData] = await Promise.all([
+      api.getStats(),
+      api.list("patients"),
+      api.list("appointments"),
+      api.list("billing"),
+      api.list("doctors"),
+    ]);
 
-      setStats(statsData || { totalPatients: 0, totalDoctors: 0, totalAppointments: 0, revenue: 0 });
-      setPatients(patientsData?.patients || patientsData || []);
-      setAppointments(appointmentsData || []);
-      setDataError("");
-    } catch (error) {
-      console.error("Dashboard Data Fetch Error:", error);
-      setDataError(error.message || "Failed to load dashboard data. Please try again.");
-    } finally {
-      setDataLoading(false);
-    }
-  };
+    setStats(statsData || { totalPatients: 0, totalDoctors: 0, totalAppointments: 0, revenue: 0 });
+    setPatients(patientsData?.patients || patientsData || []);
+    setAppointments(appointmentsData || []);
+    setBills(Array.isArray(billsData) ? billsData : []);
+    setDoctors(Array.isArray(doctorsData) ? doctorsData : []);
+    setDataError("");
+  } catch (error) {
+    console.error("Dashboard Data Fetch Error:", error);
+    setDataError(error.message || "Failed to load dashboard data. Please try again.");
+  } finally {
+    setDataLoading(false);
+    setBillsLoading(false);
+  }
+};
 
   useEffect(() => {
     loadData();
   }, []);
 
+const loadNotifications = async () => {
+  try {
+    setNotifLoading(true);
+    const data = await api.get("/notifications");
+    setNotifications(data || []);
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setNotifLoading(false);
+  }
+};
+
+useEffect(() => {
+  loadNotifications();
+}, []);
+
+const markAllNotificationsRead = async () => {
+  try {
+    await api.patch("/notifications/mark-all-read", {});
+    setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+  } catch (err) {
+    alert(err.message || "Failed to update notifications");
+  }
+};
+
+const clearAllNotifications = async () => {
+  try {
+    await api.delete("/notifications");
+    setNotifications([]);
+  } catch (err) {
+    alert(err.message || "Failed to clear notifications");
+  }
+};
+const handlePayBill = async (id) => {
+  try {
+    setPayingId(id);
+    await api.post(`/billing/${id}/pay`, {});
+    loadData();
+  } catch (err) {
+    alert(err.message || "Payment failed");
+  } finally {
+    setPayingId(null);
+  }
+};
   // Inject Custom Design Baseline Styles
   useEffect(() => {
     const style = document.createElement("style");
@@ -87,24 +145,13 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
   }, []);
 
   // Static / Dynamic Placeholders for non-API sections
-  const bills = [
-    { invoice: "INV-501", patient: "Emma Johnson", amount: "৳ 120", status: "Paid" },
-    { invoice: "INV-502", patient: "John Smith", amount: "৳ 240", status: "Pending" },
-    { invoice: "INV-503", patient: "Sophia Davis", amount: "৳ 80", status: "Paid" },
-    { invoice: "INV-504", patient: "Robert Brown", amount: "৳ 180", status: "Pending" },
-  ];
+  
 
   const beds = [
     { ward: "General Ward", total: 40, available: 12, status: "Available" },
     { ward: "Emergency Ward", total: 20, available: 5, status: "Available" },
     { ward: "ICU", total: 12, available: 2, status: "Limited" },
     { ward: "Maternity Ward", total: 25, available: 13, status: "Available" },
-  ];
-
-  const doctors = [
-    { name: "Dr. Sarah Wilson", department: "Cardiology", status: "Available" },
-    { name: "Dr. Michael Brown", department: "Medicine", status: "Busy" },
-    { name: "Dr. Davis", department: "Emergency", status: "Available" },
   ];
 
   // Client-Side Search Filters
@@ -125,8 +172,11 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
   });
 
   const filteredBills = bills.filter(
-    (b) => b.invoice.toLowerCase().includes(q) || b.patient.toLowerCase().includes(q) || b.status.toLowerCase().includes(q)
-  );
+  (b) =>
+    (b.invoiceNo || "").toLowerCase().includes(q) ||
+    (b.patient || "").toLowerCase().includes(q) ||
+    (b.status || "").toLowerCase().includes(q)
+);
 
   // Dynamic Handlers
   const handleRegistrationChange = (e) => {
@@ -148,15 +198,18 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
       const firstName = nameParts[0] || "";
       const lastName = nameParts.slice(1).join(" ") || "";
 
-      await api.create("patients", {
-        firstName,
-        lastName,
-        age: parseInt(registrationForm.age) || 0,
-        phone: registrationForm.phone,
-        email: registrationForm.email,
-        medicalHistory: registrationForm.symptoms,
-        status: "Waiting"
-      });
+     await api.create("patients", {
+  firstName,
+  lastName,
+  age: parseInt(registrationForm.age) || 0,
+  phone: registrationForm.phone,
+  email: registrationForm.email,
+  gender: registrationForm.gender,
+  bloodGroup: registrationForm.bloodGroup || undefined,
+  address: registrationForm.address,
+  medicalHistory: registrationForm.symptoms,
+  status: "Active",
+});
 
       alert("Patient registered successfully!");
       setRegistrationForm({
@@ -172,27 +225,29 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
   };
 
   // Submit New Appointment Schedule
+  // Payload now matches the Appointment mongoose schema exactly:
+  // patient (ObjectId), doctor (ObjectId), date (Date), time (String),
+  // type (enum), status (enum).
   const handleAppointmentSubmit = async (e) => {
     e.preventDefault();
     try {
       setFormSubmitting(true);
-      const selectedPatient = patients.find(p => p._id === appointmentForm.patientId || p.patientId === appointmentForm.patientId);
+      const selectedPatient = patients.find(p => p._id === appointmentForm.patientId);
 
       if (!selectedPatient) {
         alert("Please select a valid registered patient.");
         return;
       }
+      if (!appointmentForm.doctorId) {
+        alert("Please select a doctor.");
+        return;
+      }
 
       await api.create("appointments", {
-        patient: {
-          _id: selectedPatient._id,
-          firstName: selectedPatient.firstName,
-          lastName: selectedPatient.lastName
-        },
-        doctor: {
-          name: appointmentForm.doctorName
-        },
-        time: `${appointmentForm.date} @ ${appointmentForm.time}`,
+        patient: selectedPatient._id,
+        doctor: appointmentForm.doctorId,
+        date: appointmentForm.date,
+        time: appointmentForm.time,
         type: appointmentForm.type,
         status: "Confirmed",
         notes: appointmentForm.notes
@@ -200,7 +255,7 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
 
       alert("Appointment scheduled successfully!");
       setAppointmentForm({
-        patientId: "", doctorName: "", date: "", time: "", type: "General Checkup", notes: ""
+        patientId: "", doctorId: "", date: "", time: "", type: "Consultation", notes: ""
       });
       loadData();
       setActivePage("appointments");
@@ -219,7 +274,7 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
     { id: "billing", label: "Billing", icon: CreditCard },
     { id: "beds", label: "Beds", icon: Bed },
     { id: "emergency", label: "Emergency", icon: ShieldAlert },
-    { id: "notifications", label: "Notifications", icon: Bell, badge: 4 },
+    { id: "notifications", label: "Notifications", icon: Bell, badge: notifications.filter(n => n.unread).length || undefined },
     { id: "settings", label: "Settings", icon: Settings },
   ];
 
@@ -310,7 +365,11 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
           <div className="flex items-center gap-4">
             <button onClick={() => setActivePage("notifications")} className="relative p-2 hover:bg-slate-100 rounded-full transition">
               <Bell className="w-5 h-5 text-slate-600" />
-              <span className="absolute top-1 right-1 bg-red-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full">4</span>
+              {notifications.filter(n => n.unread).length > 0 && (
+  <span className="absolute top-1 right-1 bg-red-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full">
+    {notifications.filter(n => n.unread).length}
+  </span>
+)}
             </button>
             <div className="flex items-center gap-2 border-l pl-4">
               <div className="w-9 h-9 rounded-full bg-cyan-100 text-cyan-700 flex items-center justify-center font-bold text-sm">RC</div>
@@ -420,13 +479,17 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
                     <div className="bg-white rounded-2xl border p-5 shadow-sm">
                       <h2 className="text-xl font-black text-slate-900">Physician Availability</h2>
                       <div className="space-y-3 mt-5">
-                        {doctors.map((doc, index) => (
-                          <div key={index} className="border rounded-xl p-4 hover:bg-slate-50 transition">
-                            <h3 className="font-bold text-sm text-slate-900">{doc.name}</h3>
-                            <p className="text-slate-500 text-xs mt-0.5">{doc.department}</p>
-                            <div className="mt-3"><StatusBadge status={doc.status} /></div>
-                          </div>
-                        ))}
+                        {doctors.length === 0 ? (
+                          <p className="text-slate-400 text-sm text-center py-6">No doctors on file.</p>
+                        ) : (
+                          doctors.map((doc) => (
+                            <div key={doc._id} className="border rounded-xl p-4 hover:bg-slate-50 transition">
+                              <h3 className="font-bold text-sm text-slate-900">{doc.name}</h3>
+                              <p className="text-slate-500 text-xs mt-0.5">{doc.dept || doc.department}</p>
+                              <div className="mt-3"><StatusBadge status={doc.status || "Active"} /></div>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   </div>
@@ -457,42 +520,47 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
 
               {/* INVOICING & BILLING TAB */}
               {activePage === "billing" && (
-                <>
-                  <PageTitle
-                    title="Pending Bills"
-                    desc="Manage invoices and patient payments"
-                    button={
-                      <button className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl font-semibold flex gap-2 items-center text-sm transition">
-                        <Download className="w-4 h-4" /> Export Invoices
-                      </button>
-                    }
-                  />
-                  <div className="bg-white rounded-2xl border p-5 mt-6 shadow-sm">
-                    {filteredBills.length === 0 ? (
-                      <p className="text-slate-400 text-sm py-4 text-center">No outstanding records match this query criteria.</p>
-                    ) : (
-                      filteredBills.map((bill) => (
-                        <div key={bill.invoice} className="border rounded-2xl p-4 mb-3 flex justify-between items-center hover:bg-slate-50 transition">
-                          <div>
-                            <h3 className="text-base font-bold text-slate-900">{bill.invoice}</h3>
-                            <p className="text-slate-500 text-sm">{bill.patient}</p>
-                            <p className="text-lg font-black text-slate-900 mt-1">{bill.amount}</p>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <StatusBadge status={bill.status} />
-                            {bill.status !== "Paid" && (
-                              <button className="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-xl font-semibold text-sm transition">
-                                Pay Now
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </>
+  <>
+    <PageTitle
+      title="Pending Bills"
+      desc="Manage invoices and patient payments"
+      button={
+        <button className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl font-semibold flex gap-2 items-center text-sm transition">
+          <Download className="w-4 h-4" /> Export Invoices
+        </button>
+      }
+    />
+    <div className="bg-white rounded-2xl border p-5 mt-6 shadow-sm">
+      {billsLoading ? (
+        <p className="text-slate-400 text-sm py-4 text-center">Loading bills...</p>
+      ) : filteredBills.length === 0 ? (
+        <p className="text-slate-400 text-sm py-4 text-center">No outstanding records match this query criteria.</p>
+      ) : (
+        filteredBills.map((bill) => (
+          <div key={bill._id} className="border rounded-2xl p-4 mb-3 flex justify-between items-center hover:bg-slate-50 transition">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">{bill.invoiceNo}</h3>
+              <p className="text-slate-500 text-sm">{bill.patient}</p>
+              <p className="text-lg font-black text-slate-900 mt-1">৳ {bill.amount}</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <StatusBadge status={bill.status} />
+              {bill.status !== "Paid" && (
+                <button
+                  onClick={() => handlePayBill(bill._id)}
+                  disabled={payingId === bill._id}
+                  className="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-xl font-semibold text-sm transition disabled:opacity-60"
+                >
+                  {payingId === bill._id ? "Processing..." : "Pay Now"}
+                </button>
               )}
-
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  </>
+)}
               {/* GENERAL APPOINTMENTS WORKFLOW VIEW */}
               {activePage === "appointments" && (
                 <>
@@ -543,25 +611,25 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
                         <select required name="patientId" value={appointmentForm.patientId} onChange={handleAppointmentChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition h-[46px]">
                           <option value="">-- Choose Patient --</option>
                           {patients.map(p => (
-                            <option key={p._id || p.patientId} value={p._id || p.patientId}>
+                            <option key={p._id} value={p._id}>
                               {p.firstName} {p.lastName} ({p.patientId || "No ID"})
                             </option>
                           ))}
                         </select>
                       </div>
 
-                      {/* Select Doctor */}
+                      {/* Select Doctor — real Doctor _id from the API, required by the schema */}
                       <div className="flex flex-col gap-1.5">
                         <label className="text-sm font-semibold text-slate-700">Assign Practitioner *</label>
-                        <select required name="doctorName" value={appointmentForm.doctorName} onChange={handleAppointmentChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition h-[46px]">
+                        <select required name="doctorId" value={appointmentForm.doctorId} onChange={handleAppointmentChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition h-[46px]">
                           <option value="">-- Choose Doctor --</option>
-                          {doctors.map((d, index) => (
-                            <option key={index} value={d.name}>{d.name} ({d.department})</option>
+                          {doctors.map((d) => (
+                            <option key={d._id} value={d._id}>{d.name} ({d.dept || d.department})</option>
                           ))}
                         </select>
                       </div>
 
-                      {/* Appointment Date */}
+                      {/* Appointment Date — sent as its own "date" field to match the schema */}
                       <div className="flex flex-col gap-1.5">
                         <label className="text-sm font-semibold text-slate-700">Appointment Date *</label>
                         <input required type="date" name="date" value={appointmentForm.date} onChange={handleAppointmentChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
@@ -573,14 +641,13 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
                         <input required type="time" name="time" value={appointmentForm.time} onChange={handleAppointmentChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
                       </div>
 
-                      {/* Appointment Type */}
+                      {/* Appointment Type — options now match the schema enum exactly */}
                       <div className="flex flex-col gap-1.5 md:col-span-2">
                         <label className="text-sm font-semibold text-slate-700">Consultation Category</label>
                         <select name="type" value={appointmentForm.type} onChange={handleAppointmentChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition h-[46px]">
-                          <option value="General Checkup">General Checkup</option>
-                          <option value="Follow-up Visit">Follow-up Visit</option>
-                          <option value="Emergency Consult">Emergency Consult</option>
-                          <option value="Diagnostic Review">Diagnostic Review</option>
+                          <option value="Consultation">Consultation</option>
+                          <option value="Follow-up">Follow-up</option>
+                          <option value="Emergency">Emergency</option>
                         </select>
                       </div>
 
@@ -645,8 +712,18 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
                       <input name="age" type="number" value={registrationForm.age} onChange={handleRegistrationChange} placeholder="Age" className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
                       <input required name="phone" value={registrationForm.phone} onChange={handleRegistrationChange} placeholder="Phone Number" className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
                       <input name="email" type="email" value={registrationForm.email} onChange={handleRegistrationChange} placeholder="Email Address" className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
-                      <input name="bloodGroup" value={registrationForm.bloodGroup} onChange={handleRegistrationChange} placeholder="Blood Group (e.g. O+)" className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
-                      <input name="gender" value={registrationForm.gender} onChange={handleRegistrationChange} placeholder="Gender" className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
+                      <select name="bloodGroup" value={registrationForm.bloodGroup} onChange={handleRegistrationChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition h-[46px]">
+  <option value="">-- Select Blood Group --</option>
+  {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((bg) => (
+    <option key={bg} value={bg}>{bg}</option>
+  ))}
+</select>
+                      <select required name="gender" value={registrationForm.gender} onChange={handleRegistrationChange} className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition h-[46px]">
+  <option value="">-- Select Gender --</option>
+  <option value="Male">Male</option>
+  <option value="Female">Female</option>
+  <option value="Other">Other</option>
+</select>
                       <input name="doctorName" value={registrationForm.doctorName} onChange={handleRegistrationChange} placeholder="Assign Doctor Name" className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
                       <input name="department" value={registrationForm.department} onChange={handleRegistrationChange} placeholder="Department" className="bg-slate-100 px-4 py-3 rounded-xl outline-none text-sm border focus:border-cyan-600 transition" />
                       
@@ -694,19 +771,45 @@ export default function ReceptionistDashboard({ setIsLoggedIn, setUserRole }) {
 
               {/* NOTIFICATIONS TAB */}
               {activePage === "notifications" && (
-                <>
-                  <PageTitle title="Hospital Notifications" desc="Real-time emergency updates and administration alerts" />
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                    {["Emergency admission needed in Ward 3", "John Smith is waiting for billing", "Dr. Sarah Wilson is available now", "New lab report uploaded"].map((note, index) => (
-                      <div key={index} className="bg-white border rounded-2xl p-5 flex gap-3 items-center shadow-sm">
-                        {index === 0 ? <XCircle className="text-red-500 w-5 h-5 shrink-0" /> : <CheckCircle2 className="text-cyan-600 w-5 h-5 shrink-0" />}
-                        <p className="text-sm font-semibold text-slate-800">{note}</p>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-
+  <>
+    <PageTitle
+      title="Hospital Notifications"
+      desc="Real-time emergency updates and administration alerts"
+      button={
+        <div className="flex gap-2">
+          <button onClick={markAllNotificationsRead} className="border px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">
+            Mark All as Read
+          </button>
+          <button onClick={clearAllNotifications} className="border px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">
+            Clear All
+          </button>
+        </div>
+      }
+    />
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+      {notifLoading ? (
+        <p className="text-slate-400 text-sm text-center py-6 md:col-span-2">Loading notifications...</p>
+      ) : notifications.length === 0 ? (
+        <p className="text-slate-400 text-sm text-center py-6 md:col-span-2">No notifications right now.</p>
+      ) : (
+        notifications.map((n) => (
+          <div key={n._id} className={`bg-white border rounded-2xl p-5 flex gap-3 items-start shadow-sm ${n.unread ? "border-cyan-300 bg-cyan-50" : ""}`}>
+            {n.type === "alert" ? (
+              <XCircle className="text-red-500 w-5 h-5 shrink-0 mt-0.5" />
+            ) : (
+              <CheckCircle2 className="text-cyan-600 w-5 h-5 shrink-0 mt-0.5" />
+            )}
+            <div>
+              <p className="text-sm font-semibold text-slate-800">{n.title}</p>
+              <p className="text-slate-500 text-xs mt-0.5">{n.message}</p>
+              <span className="text-slate-400 text-xs">{new Date(n.createdAt).toLocaleString()}</span>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  </>
+)}
               {/* PROFILE/SYSTEM SETTINGS TAB */}
               {activePage === "settings" && (
                 <>

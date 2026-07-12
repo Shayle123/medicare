@@ -1,43 +1,34 @@
-const jwt=require("jsonwebtoken");
+const jwt = require("jsonwebtoken");
 
-module.exports=(req,res,next)=>{
+module.exports = (req, res, next) => {
+  const authHeader = req.headers.authorization;
 
-const authHeader=req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({
+      message: "Unauthorized"
+    });
+  }
 
-if(!authHeader){
+  const token = authHeader.split(" ")[1];
 
-return res.status(401).json({
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-message:"Unauthorized"
+    // ব্যাকওয়ার্ড কম্প্যাটিবিলিটির জন্য আগের ফিল্ডগুলোও রাখা হলো
+    req.userId = decoded.id;
+    req.role = decoded.role;
 
-});
+    // আপনার রিকোয়েস্ট অনুযায়ী req.user._id ফিক্স করা হলো
+    req.user = {
+      _id: decoded.id,
+      role: decoded.role
+    };
 
-}
-
-const token=authHeader.split(" ")[1];
-
-try{
-
-const decoded=jwt.verify(token,process.env.JWT_SECRET);
-
-req.userId=decoded.id;
-
-req.role=decoded.role;
-req.user = {
-    id: decoded.id,
-    role: decoded.role
-  };
-
-next();
-
-}catch(err){
-
-return res.status(401).json({
-
-message:"Invalid Token"
-
-});
-
-}
-
+    next();
+  } catch (err) {
+    console.error("JWT Verify Error:", err.name, "-", err.message);
+    return res.status(401).json({
+      message: "Invalid Token"
+    });
+  }
 };

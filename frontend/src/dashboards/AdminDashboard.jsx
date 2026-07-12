@@ -13,12 +13,13 @@ import {
 // api.update() / api.remove() — i.e. they must match your backend route names.
 const fieldConfigs = {
   patients: [
-    { key: "name", label: "Name", type: "text" },
-    { key: "patientId", label: "Patient ID", type: "text" },
-    { key: "age", label: "Age", type: "number" },
+    { key: "firstName", label: "First Name", type: "text" },
+    { key: "lastName", label: "Last Name", type: "text" },
+    { key: "phone", label: "Phone", type: "text" },
     { key: "gender", label: "Gender", type: "select", options: ["Male", "Female", "Other"] },
-    { key: "blood", label: "Blood Group", type: "text" },
-    { key: "status", label: "Status", type: "select", options: ["Active", "Waiting", "Discharged"] },
+    { key: "age", label: "Age", type: "number" },
+    { key: "bloodGroup", label: "Blood Group", type: "select", options: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] },
+    { key: "status", label: "Status", type: "select", options: ["Active", "Inactive"] },
   ],
   doctors: [
     { key: "name", label: "Name", type: "text" },
@@ -27,26 +28,31 @@ const fieldConfigs = {
     { key: "phone", label: "Phone", type: "text" },
     { key: "status", label: "Status", type: "select", options: ["Active", "On Leave"] },
   ],
+  // Matches backend Appointment schema:
+  // patient: ObjectId (ref Patient), doctor: ObjectId (ref Doctor), date: Date,
+  // time: String, type: enum [Consultation, Follow-up, Emergency],
+  // mode: enum [In-person, Online], status: enum [Confirmed, Completed, Cancelled, No-show]
   appointments: [
-    { key: "patient", label: "Patient", type: "text" },
-    { key: "doctor", label: "Doctor", type: "text" },
+    { key: "patient", label: "Patient", type: "patient" },
+    { key: "doctor", label: "Doctor", type: "doctor" },
     { key: "date", label: "Date", type: "date" },
-    { key: "time", label: "Time", type: "text" },
-    { key: "status", label: "Status", type: "select", options: ["Pending", "Confirmed", "Completed", "Cancelled"] },
+    { key: "time", label: "Time", type: "time" },
+    { key: "type", label: "Type", type: "select", options: ["Consultation", "Follow-up", "Emergency"] },
+    { key: "mode", label: "Mode", type: "select", options: ["In-person", "Online"] },
+    { key: "status", label: "Status", type: "select", options: ["Confirmed", "Completed", "Cancelled", "No-show"] },
   ],
-  
-billing: [
-  { key: "invoiceNo", label: "Invoice No", type: "text" }, // invoice -> invoiceNo
-  { key: "patient", label: "Patient Database ID", type: "text" }, // ObjectId এর জন্য ইউজারকে গাইড করতে
-  { key: "amount", label: "Amount", type: "number" },
-  { key: "status", label: "Status", type: "select", options: ["Pending", "Paid"] },
-],
+  billing: [
+    { key: "invoiceNo", label: "Invoice No", type: "text" }, // invoice -> invoiceNo
+    { key: "patient", label: "Patient", type: "patient" }, // now a proper dropdown instead of raw ObjectId text
+    { key: "amount", label: "Amount", type: "number" },
+    { key: "status", label: "Status", type: "select", options: ["Pending", "Paid"] },
+  ],
   labs: [
-  { key: "reportType", label: "Report Name", type: "text" }, // report -> reportType
-  { key: "patient", label: "Patient Database ID", type: "text" },
-  { key: "doctor", label: "Doctor Database ID", type: "text" },
-  { key: "status", label: "Status", type: "select", options: ["Pending", "Processing", "Completed"] },
-],
+    { key: "reportType", label: "Report Name", type: "text" }, // report -> reportType
+    { key: "patient", label: "Patient", type: "patient" },
+    { key: "doctor", label: "Doctor", type: "doctor" },
+    { key: "status", label: "Status", type: "select", options: ["Pending", "Processing", "Completed"] },
+  ],
   beds: [
     { key: "ward", label: "Ward", type: "text" },
     { key: "total", label: "Total Beds", type: "number" },
@@ -89,7 +95,7 @@ export default function AdminDashboard({
   const navigate = useNavigate();
   const params = useParams();
   const rawParam = params["*"] ? params["*"].split("/")[0] : "";
-const activePage = rawParam === "" ? "dashboard" : rawParam;
+  const activePage = rawParam === "" ? "dashboard" : rawParam;
   const setActivePage = (id) => navigate(`/admin/${id}`);
   const [searchText, setSearchText] = useState("");
   const q = searchText.toLowerCase();
@@ -99,6 +105,9 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
   const [patients, setPatients] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [appointments, setAppointments] = useState([]);
+
+  const [patientOptions, setPatientOptions] = useState([]);
+  const [doctorOptions, setDoctorOptions] = useState([]);
   const [bills, setBills] = useState([]);
   const [labs, setLabs] = useState([]);
   const [beds, setBeds] = useState([]);
@@ -107,7 +116,8 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
   const [inventory, setInventory] = useState([]);
   const [staff, setStaff] = useState([]);
   const [roles, setRoles] = useState([]);
-
+  const [notifications, setNotifications] = useState([]);
+  const [notifLoading, setNotifLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -182,7 +192,15 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
         ]);
 
         setStats(statsData);
-        setPatients(patientsData?.patients || []);
+        const patientList = (patientsData?.patients || []).map((p) => ({
+          ...p,
+          name: `${p.firstName || ""} ${p.lastName || ""}`.trim(),
+        }));
+
+        setPatients(patientList);
+        setPatientOptions(patientList);
+
+        setDoctorOptions(doctorsData);
         setDoctors(doctorsData);
         setAppointments(appointmentsData);
         setBills(billsData);
@@ -201,6 +219,40 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
     }
     loadAll();
   }, []);
+
+  const loadNotifications = async () => {
+    try {
+      setNotifLoading(true);
+      const data = await api.get("/notifications");
+      setNotifications(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setNotifLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
+  }, []);
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await api.patch("/notifications/mark-all-read", {});
+      setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+    } catch (err) {
+      alert(err.message || "Failed to update notifications");
+    }
+  };
+
+  const clearAllNotifications = async () => {
+    try {
+      await api.delete("/notifications");
+      setNotifications([]);
+    } catch (err) {
+      alert(err.message || "Failed to clear notifications");
+    }
+  };
 
   // --- Generic delete handler shared across resources ---
   async function handleDelete(resource, id, setter) {
@@ -228,7 +280,7 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
     { id: "reports", label: "Reports", icon: FileBarChart },
     { id: "staff", label: "Staff", icon: UserCheck },
     { id: "roles", label: "User Roles", icon: KeyRound },
-    { id: "notifications", label: "Notifications", icon: Bell, badge: 12 },
+    { id: "notifications", label: "Notifications", icon: Bell, badge: notifications.filter(n => n.unread).length || undefined },
     { id: "settings", label: "Settings", icon: Settings },
   ];
 
@@ -246,30 +298,30 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
     { title: "Billing completed", user: "Finance Department", time: "2 hours ago", icon: CreditCard, page: "activityBilling" },
   ];
 
-  const filteredPatients = patients.filter((p) => 
-  p.firstName?.toLowerCase().includes(q) || 
-  p.lastName?.toLowerCase().includes(q) || 
-  p.patientId?.toLowerCase().includes(q)
-);
+  const filteredPatients = patients.filter((p) =>
+    p.firstName?.toLowerCase().includes(q) ||
+    p.lastName?.toLowerCase().includes(q) ||
+    p.patientId?.toLowerCase().includes(q)
+  );
   const filteredDoctors = doctors.filter((d) => d.name?.toLowerCase().includes(q) || d.dept?.toLowerCase().includes(q));
   const filteredAppointments = appointments.filter((a) =>
     a.patient?.name?.toLowerCase().includes(q) || a.doctor?.name?.toLowerCase().includes(q)
   );
-  const filteredBills = bills.filter((b) => b.patient?.toLowerCase().includes(q) || b.invoice?.toLowerCase().includes(q));
-  const filteredLabs = labs.filter((l) => l.report?.toLowerCase().includes(q) || l.patient?.toLowerCase().includes(q));
-   const filteredStaff = staff.filter((s) => 
-  s.firstName?.toLowerCase().includes(q) || 
-  s.lastName?.toLowerCase().includes(q) || 
-  s.role?.toLowerCase().includes(q)
-);
+  const filteredBills = bills.filter((b) => b.patient?.toLowerCase?.().includes(q) || b.invoiceNo?.toLowerCase().includes(q));
+  const filteredLabs = labs.filter((l) => l.reportType?.toLowerCase().includes(q) || l.patient?.toLowerCase?.().includes(q));
+  const filteredStaff = staff.filter((s) =>
+    s.firstName?.toLowerCase().includes(q) ||
+    s.lastName?.toLowerCase().includes(q) ||
+    s.role?.toLowerCase().includes(q)
+  );
 
   const StatusBadge = ({ status }) => {
     const color =
       ["Paid", "Completed", "Available", "Confirmed", "Active"].includes(status)
         ? "bg-green-100 text-green-700"
         : ["Waiting", "Pending", "Limited", "Processing", "Low Stock", "On Leave"].includes(status)
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-red-100 text-red-700";
+          ? "bg-yellow-100 text-yellow-700"
+          : "bg-red-100 text-red-700";
     return <span className={`${color} px-3 py-1 rounded-full text-xs font-semibold`}>{status}</span>;
   };
 
@@ -424,9 +476,8 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
             <button
               key={item.id}
               onClick={() => setActivePage(item.id)}
-              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl font-semibold text-sm transition ${
-                activePage === item.id ? "bg-indigo-600 text-white shadow" : "text-slate-700 hover:bg-slate-100"
-              }`}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl font-semibold text-sm transition ${activePage === item.id ? "bg-indigo-600 text-white shadow" : "text-slate-700 hover:bg-slate-100"
+                }`}
             >
               <div className="flex items-center gap-3">
                 <item.icon className="w-4 h-4" />
@@ -469,7 +520,11 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
           <div className="flex items-center gap-4">
             <button onClick={() => setActivePage("notifications")} className="relative">
               <Bell className="w-5 h-5 text-slate-600" />
-              <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs w-4 h-4 flex items-center justify-center rounded-full">12</span>
+              {notifications.filter(n => n.unread).length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs w-4 h-4 flex items-center justify-center rounded-full">
+                  {notifications.filter(n => n.unread).length}
+                </span>
+              )}
             </button>
             <div className="flex items-center gap-2">
               <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">AD</div>
@@ -591,7 +646,7 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
 
           {activePage === "activityLab" && (
             <ActivityDetail icon={FlaskConical} title="Lab Report Uploaded" desc="New laboratory report activity details">
-              <h2 className="text-2xl font-black text-slate-900">{labs[0]?.report || "No report yet"}</h2>
+              <h2 className="text-2xl font-black text-slate-900">{labs[0]?.reportType || "No report yet"}</h2>
               <p className="text-slate-500 text-sm mt-2">Latest lab report uploaded for review.</p>
               <div className="grid grid-cols-2 gap-4 mt-5">
                 <div className="bg-slate-100 rounded-xl p-4 text-sm"><b>Patient:</b> {labs[0]?.patient || "—"}</div>
@@ -622,9 +677,9 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
               <h2 className="text-2xl font-black text-slate-900">{bills[0]?.invoice || "No invoice yet"}</h2>
               <p className="text-slate-500 text-sm mt-2">Finance department completed the payment successfully.</p>
               <div className="grid grid-cols-2 gap-4 mt-5">
-                <div className="bg-slate-100 rounded-xl p-4 text-sm"><b>Patient:</b> {bills[0]?.patient || "—"}</div>
+                <div className="bg-slate-100 rounded-xl p-4 text-sm"><b>Patient:</b> {getDisplayName(bills[0]?.patient) || "—"}</div>
                 <div className="bg-slate-100 rounded-xl p-4 text-sm"><b>Amount:</b> ${bills[0]?.amount ?? "—"}</div>
-                <div className="bg-slate-100 rounded-xl p-4 text-sm"><b>Invoice:</b> {bills[0]?.invoice || "—"}</div>
+                <div className="bg-slate-100 rounded-xl p-4 text-sm"><b>Invoice:</b> {bills[0]?.invoiceNo || "—"}</div>
                 <div className="bg-slate-100 rounded-xl p-4 text-sm"><b>Status:</b> {bills[0]?.status || "—"}</div>
               </div>
               <button onClick={() => setActivePage("billing")} className="mt-5 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm">Open Billing</button>
@@ -633,7 +688,7 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
 
           {/* LIST PAGES */}
           {activePage === "patients" && (
-            <SimpleListPage title="Patient Management" desc="View, edit and manage patient records" data={filteredPatients} columns={["name", "patientId", "age", "gender", "blood", "status"]} buttonText="Add Patient" buttonIcon={Plus} resource="patients" setter={setPatients} />
+            <SimpleListPage title="Patient Management" desc="View, edit and manage patient records" data={filteredPatients} columns={["name", "patientId", "age", "gender", "bloodGroup", "status"]} buttonText="Add Patient" buttonIcon={Plus} resource="patients" setter={setPatients} />
           )}
           {activePage === "doctors" && (
             <SimpleListPage title="Doctor Management" desc="Manage doctors, departments and availability" data={filteredDoctors} columns={["name", "dept", "patients", "status"]} buttonText="Add Doctor" buttonIcon={UserPlus} resource="doctors" setter={setDoctors} />
@@ -761,7 +816,36 @@ const activePage = rawParam === "" ? "dashboard" : rawParam;
               {modal.fields.map((f) => (
                 <div key={f.key}>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">{f.label}</label>
-                  {f.type === "select" ? (
+
+                  {f.type === "patient" ? (
+                    <select
+                      disabled={modal.mode === "view"}
+                      value={formData.patient || ""}
+                      onChange={(e) => setFormData({ ...formData, patient: e.target.value })}
+                      className="w-full bg-slate-100 px-4 py-2.5 rounded-xl outline-none text-sm disabled:opacity-60"
+                    >
+                      <option value="">Select Patient</option>
+                      {patientOptions.map((p) => (
+                        <option key={p._id} value={p._id}>
+                          {p.firstName} {p.lastName} ({p.patientId})
+                        </option>
+                      ))}
+                    </select>
+                  ) : f.type === "doctor" ? (
+                    <select
+                      disabled={modal.mode === "view"}
+                      value={formData.doctor || ""}
+                      onChange={(e) => setFormData({ ...formData, doctor: e.target.value })}
+                      className="w-full bg-slate-100 px-4 py-2.5 rounded-xl outline-none text-sm disabled:opacity-60"
+                    >
+                      <option value="">Select Doctor</option>
+                      {doctorOptions.map((d) => (
+                        <option key={d._id} value={d._id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : f.type === "select" ? (
                     <select
                       disabled={modal.mode === "view"}
                       value={formData[f.key] ?? ""}

@@ -1,7 +1,14 @@
 const mongoose = require("mongoose");
 
 const patientSchema = new mongoose.Schema(
-  { 
+  {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      unique: true,
+      required: true,
+    },
+
     patientId: {
       type: String,
       unique: true,
@@ -19,10 +26,15 @@ const patientSchema = new mongoose.Schema(
       trim: true,
     },
 
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+    },
+
     gender: {
       type: String,
       enum: ["Male", "Female", "Other"],
-      required: true,
     },
 
     age: {
@@ -46,14 +58,6 @@ const patientSchema = new mongoose.Schema(
       required: true,
       trim: true,
       unique: true,
-    },
-
-    email: {
-      type: String,
-      lowercase: true,
-      trim: true,
-      unique: true,
-      sparse: true,
     },
 
     address: {

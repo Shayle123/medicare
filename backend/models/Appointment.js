@@ -1,59 +1,49 @@
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
 
-const appointmentSchema = new mongoose.Schema(
-{
-    patient:{
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"Patient",
-        required:true
-    },
+const appointmentSchema = new mongoose.Schema({
+  patient: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Patient',
+    required: true
+  },
+  doctor: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Doctor',
+    required: true
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  time: {
+    type: String,
+    required: true
+  },
+  type: {
+    type: String,
+    enum: ['Consultation', 'Follow-up', 'Emergency'],
+    default: 'Consultation'
+  },
+  mode: {
+    type: String,
+    enum: ['In-person', 'Online'],
+    default: 'In-person'
+  },
+  reason: String,
+  status: {
+    type: String,
+    enum: ['Confirmed', 'Completed', 'Cancelled', 'No-show'],
+    default: 'Confirmed'
+  },
+  notes: String,
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, { timestamps: true });
 
-    doctor:{
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"Doctor",
-        required:true
-    },
-
-    date:{
-        type:Date,
-        required:true
-    },
-
-    time:{
-        type:String,
-        required:true
-    },
-
-    type:{
-        type:String,
-        default:"General"
-    },
-
-    mode:{
-        type:String,
-        enum:["Physical","Online"],
-        default:"Physical"
-    },
-
-    reason:{
-        type:String,
-        default:""
-    },
-
-    status:{
-        type:String,
-        enum:[
-            "Pending",
-            "Confirmed",
-            "Completed",
-            "Cancelled"
-        ],
-        default:"Pending"
-    }
-
-},
-{
-    timestamps:true
-});
-
-module.exports=mongoose.model("Appointment",appointmentSchema);
+module.exports = mongoose.model('Appointment', appointmentSchema);
