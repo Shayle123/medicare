@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:5000/api";
+const BASE_URL = "https://medicare-backend-6x0f.onrender.com";
 
 
 export const getToken = () =>
